@@ -52,19 +52,44 @@ process_file() {
     input_extension="${input_file##*.}"
     copy_file="${input_file%.*}_copy.$input_extension"
 
-    audio_format=$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_name -of default=noprint_wrappers=1:nokey=1 "$input_file")
+    audio_streams=$(ffprobe -v error -select_streams a -show_entries stream=index -of default=noprint_wrappers=1:nokey=1 "$input_file" | wc -l)
 
-    if [ "$audio_format" != "eac3" ] || [ "$audio_format" != "ac3" ]; then
-        echo "Transcoding audio in '$input_file' from $audio_format to eac3"
-        ffmpeg -i "$input_file" -map 0 -c:v copy -c:a eac3 -b:a 640k -c:s copy "$copy_file"
-        if [ "$overwrite" = true ]; then
-            mv "$copy_file" "$input_file"
+    if [ "$audio_streams" -eq 0 ]; then
+        echo "No audio streams found in '$input_file'"
+        return
+    fi
+
+    for stream_index in $(seq 0 $((audio_streams - 1))); do
+        audio_format=$(ffprobe -v error -select_streams a:$stream_index -show_entries stream=codec_name -of default=noprint_wrappers=1:nokey=1 "$input_file")
+        if [ "$audio_format" != "eac3" ] && [ "$audio_format" != "ac3" ]; then
+            echo "Transcoding audio stream $stream_index in '$input_file' from $audio_format to eac3"
+            # Can't overwrite copy_file in place, therefore use a temp file for now
+            if [ -f "$copy_file" ]; then
+                temp_file="${input_file%.*}_copy_temp.$input_extension"
+                ffmpeg -y -i "$copy_file" -c copy -map 0 -c:a:$stream_index eac3 -b:a:$stream_index 640k "$temp_file"
+                mv "$temp_file" "$copy_file"
+            else
+                ffmpeg -i "$input_file" -c copy -map 0 -c:a:$stream_index eac3 -b:a:$stream_index 640k "$copy_file"
+            fi
+        else
+            echo "$input_file audio stream $stream_index is already in eac3 or ac3 format"
         fi
-        echo "Done"
-    else
-        echo "$input_file audio is already in eac3 or ac3 format"
+    done
+
+    if [ "$overwrite" = true ]; then
+        mv "$copy_file" "$input_file"
     fi
 }
+
+# Support Sonarr/Radarr post processing scripts
+# They pass the file paths as environment variables, sonarr_episodefile_path and radarr_moviefile_path
+if [ -n "$sonarr_episodefile_path" ]; then
+    process_file "$sonarr_episodefile_path"
+    exit 0
+elif [ -n "$radarr_moviefile_path" ]; then
+    process_file "$radarr_moviefile_path"
+    exit 0
+fi
 
 if [ "$all" = true ]; then
     for input_file in *; do
