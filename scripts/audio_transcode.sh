@@ -85,15 +85,15 @@ process_file() {
         return
     fi
 
-    input_extension="${input_file##*.}"
-    copy_file="${input_file%.*}_copy.$input_extension"
-
     audio_streams=$(ffprobe -v error -select_streams a -show_entries stream=index -of default=noprint_wrappers=1:nokey=1 "$input_file" | wc -l)
 
     if [ "$audio_streams" -eq 0 ]; then
         echo "No audio streams found in '$input_file'"
         return
     fi
+
+    input_extension="${input_file##*.}"
+    copy_file="${input_file%.*}_copy.$input_extension"
 
     for stream_index in $(seq 0 $((audio_streams - 1))); do
         audio_format=$(ffprobe -v error -select_streams a:$stream_index -show_entries stream=codec_name -of default=noprint_wrappers=1:nokey=1 "$input_file")
@@ -120,7 +120,7 @@ process_file() {
         fi
     done
 
-    if [ "$overwrite" = true ]; then
+    if [ -f "$copy_file"] && [ "$overwrite" = true ]; then
         mv "$copy_file" "$input_file"
     fi
 }
