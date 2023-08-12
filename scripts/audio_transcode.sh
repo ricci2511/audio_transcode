@@ -9,6 +9,8 @@
 overwrite=false
 # Passing -a as an argument will set this to true and go through all files in the current directory
 all=false
+# Passing -r as an argument will set this to true and go through files in all subdirectories from the current directory
+traverse_subdirs=false
 
 # Parse command line arguments: -o and -a
 while :
@@ -20,6 +22,10 @@ do
             ;;
         -a)
             all=true
+            shift
+            ;;
+        -r)
+            traverse_subdirs=true
             shift
             ;;
         -*)
@@ -40,7 +46,16 @@ process_file() {
     local input_file="$1"
 
     if [ -d "$input_file" ]; then
-        echo "Skipping directory $input_file"
+        if [ "$traverse_subdirs" = true ]; then
+            echo "Traversing directory $input_file"
+            cd "$input_file"
+            for sub_file in *; do
+                process_file "$sub_file"
+            done
+            cd ..
+        else
+            echo "Skipping directory $input_file"
+        fi
         return
     fi
 
