@@ -1,18 +1,39 @@
 #!/bin/bash
 
-# This script transcodes audio from video files to eac3 format
-# Requires ffmpeg and ffprobe to be installed and in your PATH
+#####################################################################
+# Audio Transcoding Script
 #
-# I personally prefer to direct play my media, therefore I transcode all my audio to eac3
+# This script transcodes audio streams in video files to eac3 format with 640k bitrate.
+# Stereo audio streams are transcoded to ac3 format with 224k bitrate.
+# It utilizes FFmpeg for audio transcoding and processing.
+#
+# Usage:
+# ./audio_transcode.sh [OPTIONS] [FILE(s)]
+#
+# Options:
+#   -o   Overwrite original files with transcoded audio.
+#   -a   Process all files in the current directory.
+#   -r   Traverse subdirectories and process their contents.
+#
+# Examples:
+#   ./audio_transcode.sh -o movie.mkv
+#   ./audio_transcode.sh -a
+#   ./audio_transcode.sh -r
+#
+# Notes:
+# - By default, the script preserves video and subtitle streams.
+# - You can customize the audio transcoding settings within the script.
+# - Supports Sonarr/Radarr custom scripts for Import/Upgrade events.
+#
+# Dependencies:
+# - FFmpeg and ffprobe must be installed and accessible in your PATH.
+#####################################################################
 
-# Passing -o as an argument will set this to true and overwrite the original file with the transcoded one
-overwrite=false
-# Passing -a as an argument will set this to true and go through all files in the current directory
-all=false
-# Passing -r as an argument will set this to true and go through files in all subdirectories from the current directory
-traverse_subdirs=false
+overwrite=false        # -o
+all=false              # -a
+traverse_subdirs=false # -r
 
-# Parse command line arguments: -o and -a
+# Parse command line arguments
 while :
 do
     case "$1" in
@@ -76,15 +97,23 @@ process_file() {
 
     for stream_index in $(seq 0 $((audio_streams - 1))); do
         audio_format=$(ffprobe -v error -select_streams a:$stream_index -show_entries stream=codec_name -of default=noprint_wrappers=1:nokey=1 "$input_file")
+        audio_channels=$(ffprobe -v error -select_streams a:$stream_index -show_entries stream=channels -of default=noprint_wrappers=1:nokey=1 "$input_file")
+        format_bitrate="eac3 -b:a:$stream_index 640k"
+
+        # Use ac3 with 224k bitrate for stereo audio
+        if [ "$audio_channels" -eq 2 ]; then
+            format_bitrate="ac3 -b:a:$stream_index 224k"
+        fi
+
         if [ "$audio_format" != "eac3" ] && [ "$audio_format" != "ac3" ]; then
             echo "Transcoding audio stream $stream_index in '$input_file' from $audio_format to eac3"
             # Can't overwrite copy_file in place, therefore use a temp file for now
             if [ -f "$copy_file" ]; then
                 temp_file="${input_file%.*}_copy_temp.$input_extension"
-                ffmpeg -y -i "$copy_file" -c copy -map 0 -c:a:$stream_index eac3 -b:a:$stream_index 640k "$temp_file"
+                ffmpeg -y -i "$copy_file" -c copy -map 0 -c:a:$stream_index $format_bitrate "$temp_file"
                 mv "$temp_file" "$copy_file"
             else
-                ffmpeg -i "$input_file" -c copy -map 0 -c:a:$stream_index eac3 -b:a:$stream_index 640k "$copy_file"
+                ffmpeg -i "$input_file" -c copy -map 0 -c:a:$stream_index $format_bitrate "$copy_file"
             fi
         else
             echo "$input_file audio stream $stream_index is already in eac3 or ac3 format"
@@ -97,11 +126,15 @@ process_file() {
 }
 
 # Support Sonarr/Radarr post processing scripts
-# They pass the file paths as environment variables, sonarr_episodefile_path and radarr_moviefile_path
-if [ -n "$sonarr_episodefile_path" ]; then
+# File paths are passed as environment variables (sonarr_episodefile_path and radarr_moviefile_path)
+if [ -f "$sonarr_episodefile_path" ]; then
+    echo "Processing file from Sonarr: $sonarr_episodefile_path"
+    overwrite=true # Remove this if you want to keep the original file
     process_file "$sonarr_episodefile_path"
     exit 0
-elif [ -n "$radarr_moviefile_path" ]; then
+elif [ -f "$radarr_moviefile_path" ]; then
+    echo "Processing file from Radarr: $radarr_moviefile_path"
+    overwrite=true # Remove this if you want to keep the original file
     process_file "$radarr_moviefile_path"
     exit 0
 fi
