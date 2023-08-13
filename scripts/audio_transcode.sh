@@ -63,6 +63,35 @@ if [ $overwrite = true ]; then
     echo "WARNING: passed -o argument, original files will be overwritten"
 fi
 
+transcode_audio() {
+    local input_file="$1"
+    local copy_file="$2"
+    local stream_index="$3"
+
+    audio_channels=$(ffprobe -v error -select_streams a:$stream_index -show_entries stream=channels -of default=noprint_wrappers=1:nokey=1 "$input_file")
+    format_bitrate="eac3 -b:a:$stream_index 640k"
+
+    # Use ac3 with 224k bitrate for stereo audio
+    if [ "$audio_channels" -eq 2 ]; then
+        format_bitrate="ac3 -b:a:$stream_index 224k"
+    fi
+
+    if [ -f "$copy_file" ]; then
+        if [ "$overwrite" = false ]; then
+            # Can't overwrite copy_file in place, therefore use a temp file
+            temp_file="${input_file%.*}_copy_temp.$input_extension"
+            ffmpeg -y -i "$copy_file" -c copy -map 0 -c:a:$stream_index $format_bitrate "$temp_file"
+            mv "$temp_file" "$copy_file"
+            return
+        fi
+
+        # Overwrite enabled, so replace the original with the copy, so it can be used as input to create the new copy below
+        mv "$copy_file" "$input_file"
+    fi
+
+    ffmpeg -i "$input_file" -c copy -map 0 -c:a:$stream_index $format_bitrate "$copy_file"
+}
+
 process_file() {
     local input_file="$1"
 
@@ -97,30 +126,16 @@ process_file() {
 
     for stream_index in $(seq 0 $((audio_streams - 1))); do
         audio_format=$(ffprobe -v error -select_streams a:$stream_index -show_entries stream=codec_name -of default=noprint_wrappers=1:nokey=1 "$input_file")
-        audio_channels=$(ffprobe -v error -select_streams a:$stream_index -show_entries stream=channels -of default=noprint_wrappers=1:nokey=1 "$input_file")
-        format_bitrate="eac3 -b:a:$stream_index 640k"
-
-        # Use ac3 with 224k bitrate for stereo audio
-        if [ "$audio_channels" -eq 2 ]; then
-            format_bitrate="ac3 -b:a:$stream_index 224k"
-        fi
 
         if [ "$audio_format" != "eac3" ] && [ "$audio_format" != "ac3" ]; then
             echo "Transcoding audio stream $stream_index in '$input_file' from $audio_format to eac3"
-            # Can't overwrite copy_file in place, therefore use a temp file for now
-            if [ -f "$copy_file" ]; then
-                temp_file="${input_file%.*}_copy_temp.$input_extension"
-                ffmpeg -y -i "$copy_file" -c copy -map 0 -c:a:$stream_index $format_bitrate "$temp_file"
-                mv "$temp_file" "$copy_file"
-            else
-                ffmpeg -i "$input_file" -c copy -map 0 -c:a:$stream_index $format_bitrate "$copy_file"
-            fi
+            transcode_audio "$input_file" "$copy_file" "$stream_index"
         else
-            echo "$input_file audio stream $stream_index is already in eac3 or ac3 format"
+            echo "$input_file audio stream $stream_index is already in $audio_format format"
         fi
     done
 
-    if [ -f "$copy_file"] && [ "$overwrite" = true ]; then
+    if [ -f "$copy_file" ] && [ "$overwrite" = true ]; then
         mv "$copy_file" "$input_file"
     fi
 }
