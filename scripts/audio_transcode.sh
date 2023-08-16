@@ -3,7 +3,7 @@
 #####################################################################
 # Audio Transcoding Script
 #
-# This script transcodes audio streams in video files to eac3 format with 640k bitrate.
+# This script transcodes audio streams in video files to ac3 format with 640k bitrate.
 # Stereo audio streams are transcoded to ac3 format with 224k bitrate.
 # It utilizes FFmpeg for audio transcoding and processing.
 #
@@ -12,15 +12,14 @@
 #
 # Options:
 #   -o   Overwrite original files with transcoded audio.
-#   -a   Process all files in the current directory.
 #   -r   Traverse subdirectories and process their contents.
 #
 # Examples:
 #   ./audio_transcode.sh -o movie.mkv
-#   ./audio_transcode.sh -a
-#   ./audio_transcode.sh -r
+#   ./audio_transcode.sh -r /path/to/movies
 #
 # Notes:
+# - If no arguments are passed, all files in the current directory are processed.
 # - By default, the script preserves video and subtitle streams.
 # - You can customize the audio transcoding settings within the script.
 # - Supports Sonarr/Radarr custom scripts for Import/Upgrade events.
@@ -30,7 +29,6 @@
 #####################################################################
 
 overwrite=false        # -o
-all=false              # -a
 traverse_subdirs=false # -r
 
 # Parse command line arguments
@@ -39,10 +37,6 @@ do
     case "$1" in
         -o)
             overwrite=true
-            shift
-            ;;
-        -a)
-            all=true
             shift
             ;;
         -r)
@@ -71,12 +65,12 @@ transcode_audio() {
     local channels=$(ffprobe -v error -select_streams a:$stream_index -show_entries stream=channels -of default=noprint_wrappers=1:nokey=1 "$input_file")
     local lang=$(ffprobe -v error -select_streams a:$stream_index -show_entries stream_tags=language -of default=noprint_wrappers=1:nokey=1 "$input_file")
 
-    local format_bitrate="eac3 -b:a:$stream_index 640k"
-    local stream_title="title=$lang EAC3 5.1 @ 640k" # New title metadata for the transcoded audio stream
+    local bitrate="640k"
+    local stream_title="title=$lang AC3 5.1 @ 640k" # New title metadata for the transcoded audio stream
 
     # Use ac3 with 224k bitrate for stereo audio
     if [ "$channels" -eq 2 ]; then
-        format_bitrate="ac3 -b:a:$stream_index 224k"
+        bitrate="224k"
         stream_title="title=$lang AC3 2.0 @ 224k"
     fi
 
@@ -84,7 +78,7 @@ transcode_audio() {
         if [ "$overwrite" = false ]; then
             # Can't overwrite copy_file in place, therefore use a temp file
             local temp_file="${input_file%.*}_copy_temp.$input_extension"
-            ffmpeg -y -i "$copy_file" -c copy -map 0 -c:a:$stream_index $format_bitrate -metadata:s:a:$stream_index "$stream_title" "$temp_file"
+            ffmpeg -y -i "$copy_file" -c copy -map 0 -c:a:$stream_index ac3 -b:a:$stream_index $bitrate -metadata:s:a:$stream_index "$stream_title" "$temp_file"
             mv "$temp_file" "$copy_file"
             return
         fi
@@ -93,7 +87,7 @@ transcode_audio() {
         mv "$copy_file" "$input_file"
     fi
 
-    ffmpeg -i "$input_file" -c copy -map 0 -c:a:$stream_index $format_bitrate -metadata:s:a:$stream_index "$stream_title" "$copy_file"
+    ffmpeg -i "$input_file" -c copy -map 0 -c:a:$stream_index ac3 -b:a:$stream_index $bitrate -metadata:s:a:$stream_index "$stream_title" "$copy_file"
 }
 
 process_file() {
@@ -114,22 +108,21 @@ process_file() {
     fi
 
     if [ ! -f "$input_file" ]; then
-        echo "File $input_file does not exist"
+        echo "Skipping non-file $input_file"
         return
     fi
 
-    audio_streams=$(ffprobe -v error -select_streams a -show_entries stream=index -of default=noprint_wrappers=1:nokey=1 "$input_file" | wc -l)
-
+    # Redirect invalid input file errors to /dev/null. In that case the streams count will be 0 and the file will be skipped.
+    local audio_streams=$(ffprobe -v error -select_streams a -show_entries stream=index -of default=noprint_wrappers=1:nokey=1 "$input_file" 2>/dev/null | wc -l)
     if [ "$audio_streams" -eq 0 ]; then
-        echo "No audio streams found in '$input_file'"
         return
     fi
 
-    input_extension="${input_file##*.}"
-    copy_file="${input_file%.*}_copy.$input_extension"
+    local input_extension="${input_file##*.}"
+    local copy_file="${input_file%.*}_copy.$input_extension"
 
     for stream_index in $(seq 0 $((audio_streams - 1))); do
-        audio_format=$(ffprobe -v error -select_streams a:$stream_index -show_entries stream=codec_name -of default=noprint_wrappers=1:nokey=1 "$input_file")
+        local audio_format=$(ffprobe -v error -select_streams a:$stream_index -show_entries stream=codec_name -of default=noprint_wrappers=1:nokey=1 "$input_file")
 
         if [ "$audio_format" != "eac3" ] && [ "$audio_format" != "ac3" ]; then
             echo "Transcoding audio stream $stream_index in '$input_file' from $audio_format to eac3"
@@ -158,12 +151,13 @@ elif [ -f "$radarr_moviefile_path" ]; then
     exit 0
 fi
 
-if [ "$all" = true ]; then
-    for input_file in *; do
+# Arguments take precedence, if none are passed, process all files in the current dir
+if [ $# -gt 0 ]; then
+    for input_file in "$@"; do
         process_file "$input_file"
     done
 else
-    for input_file in "$@"; do
+    for input_file in *; do
         process_file "$input_file"
     done
 fi
