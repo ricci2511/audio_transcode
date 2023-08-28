@@ -65,12 +65,12 @@ transcode_audio() {
     local channels=$(ffprobe -v error -select_streams a:$stream_index -show_entries stream=channels -of default=noprint_wrappers=1:nokey=1 "$input_file")
     local lang=$(ffprobe -v error -select_streams a:$stream_index -show_entries stream_tags=language -of default=noprint_wrappers=1:nokey=1 "$input_file")
 
-    local bitrate="640k"
+    local bitrate_channels="640k -ac 6"
     local stream_title="title=$lang AC3 5.1 @ 640k" # New title metadata for the transcoded audio stream
 
-    # Use ac3 with 224k bitrate for stereo audio
+    # Use ac3 with 224k bitrate_channels for stereo audio
     if [ "$channels" -eq 2 ]; then
-        bitrate="224k"
+        bitrate_channels="224k -ac 2"
         stream_title="title=$lang AC3 2.0 @ 224k"
     fi
 
@@ -78,7 +78,7 @@ transcode_audio() {
         if [ "$overwrite" = false ]; then
             # Can't overwrite copy_file in place, therefore use a temp file
             local temp_file="${input_file%.*}_copy_temp.$input_extension"
-            ffmpeg -y -i "$copy_file" -c copy -map 0 -c:a:$stream_index ac3 -b:a:$stream_index $bitrate -metadata:s:a:$stream_index "$stream_title" "$temp_file"
+            ffmpeg -y -i "$copy_file" -c copy -map 0 -c:a:$stream_index ac3 -b:a:$stream_index $bitrate_channels -metadata:s:a:$stream_index "$stream_title" "$temp_file"
             mv "$temp_file" "$copy_file"
             return
         fi
@@ -87,7 +87,7 @@ transcode_audio() {
         mv "$copy_file" "$input_file"
     fi
 
-    ffmpeg -i "$input_file" -c copy -map 0 -c:a:$stream_index ac3 -b:a:$stream_index $bitrate -metadata:s:a:$stream_index "$stream_title" "$copy_file"
+    ffmpeg -i "$input_file" -c copy -map 0 -c:a:$stream_index ac3 -b:a:$stream_index $bitrate_channels -metadata:s:a:$stream_index "$stream_title" "$copy_file"
 }
 
 process_file() {
