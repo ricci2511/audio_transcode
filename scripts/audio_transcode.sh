@@ -21,12 +21,15 @@
 # Notes:
 # - If no arguments are passed, all files in the current directory are processed.
 # - By default, the script preserves video and subtitle streams.
+# - Only audio streams with languages specified in the `desired_languages` array are included in the output.
 # - You can customize the audio transcoding settings within the script.
 # - Supports Sonarr/Radarr custom scripts for Import/Upgrade events.
 #
 # Dependencies:
 # - FFmpeg and ffprobe must be installed and accessible in your PATH.
 #####################################################################
+
+desired_languages=("eng" "ger" "spa")
 
 overwrite=false        # -o
 traverse_subdirs=false # -r
@@ -61,9 +64,9 @@ transcode_audio() {
     local input_file="$1"
     local copy_file="$2"
     local stream_index="$3"
+    local lang="$4"
 
     local channels=$(ffprobe -v error -select_streams a:$stream_index -show_entries stream=channels -of default=noprint_wrappers=1:nokey=1 "$input_file")
-    local lang=$(ffprobe -v error -select_streams a:$stream_index -show_entries stream_tags=language -of default=noprint_wrappers=1:nokey=1 "$input_file")
 
     local bitrate_channels="640k -ac 6"
     local stream_title="title=$lang AC3 5.1 @ 640k" # New title metadata for the transcoded audio stream
@@ -123,12 +126,19 @@ process_file() {
 
     for stream_index in $(seq 0 $((audio_streams - 1))); do
         local audio_format=$(ffprobe -v error -select_streams a:$stream_index -show_entries stream=codec_name -of default=noprint_wrappers=1:nokey=1 "$input_file")
+        local lang=$(ffprobe -v error -select_streams a:$stream_index -show_entries stream_tags=language -of default=noprint_wrappers=1:nokey=1 "$input_file")
 
-        if [ "$audio_format" != "eac3" ] && [ "$audio_format" != "ac3" ]; then
-            echo "Transcoding audio stream $stream_index in '$input_file' from $audio_format to eac3"
-            transcode_audio "$input_file" "$copy_file" "$stream_index"
+        # Check if the language of the current audio stream is a desired language
+        # Adding spaces around ${desired_languages[@]} and ${lang} ensures that we only match whole words.
+        if [[ " ${desired_languages[@]} " =~ " ${lang} " ]]; then
+            if [ "$audio_format" != "eac3" ] && [ "$audio_format" != "ac3" ]; then
+                echo "Transcoding audio stream $stream_index in '$input_file' from $audio_format to eac3"
+                transcode_audio "$input_file" "$copy_file" "$stream_index" "$lang"
+            else
+                echo "$input_file audio stream $stream_index is already in $audio_format format"
+            fi
         else
-            echo "$input_file audio stream $stream_index is already in $audio_format format"
+            echo "Skipping audio stream $stream_index in '$input_file' with language '$lang'"
         fi
     done
 
