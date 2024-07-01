@@ -29,145 +29,145 @@
 # - FFmpeg and ffprobe must be installed and accessible in your PATH.
 #####################################################################
 
-desired_languages=("eng" "ger" "spa")
+desired_languages=("eng" "ger" "spa" "jpn") # Any other lang is skipped
+main_language="ger"                         # Main language for audio track selection (default)
 
 overwrite=false        # -o
 traverse_subdirs=false # -r
 
 # Parse command line arguments
-while :
-do
-    case "$1" in
-        -o)
-            overwrite=true
-            shift
-            ;;
-        -r)
-            traverse_subdirs=true
-            shift
-            ;;
-        -*)
-            echo "Unknown option: $1"
-            exit 1
-            ;;
-        *)
-            break
-            ;;
-    esac
+while :; do
+	case "$1" in
+	-o)
+		overwrite=true
+		shift
+		;;
+	-r)
+		traverse_subdirs=true
+		shift
+		;;
+	-*)
+		echo "Unknown option: $1"
+		exit 1
+		;;
+	*)
+		break
+		;;
+	esac
 done
 
 if [ $overwrite = true ]; then
-    echo "WARNING: passed -o argument, original files will be overwritten"
+	echo "WARNING: passed -o argument, original files will be overwritten"
 fi
 
-transcode_audio() {
-    local input_file="$1"
-    local copy_file="$2"
-    local stream_index="$3"
-    local lang="$4"
-
-    local channels=$(ffprobe -v error -select_streams a:$stream_index -show_entries stream=channels -of default=noprint_wrappers=1:nokey=1 "$input_file")
-
-    local bitrate_channels="640k -ac 6"
-    local stream_title="title=$lang AC3 5.1 @ 640k" # New title metadata for the transcoded audio stream
-
-    # Use ac3 with 224k bitrate_channels for stereo audio
-    if [ "$channels" -eq 2 ]; then
-        bitrate_channels="224k -ac 2"
-        stream_title="title=$lang AC3 2.0 @ 224k"
-    fi
-
-    if [ -f "$copy_file" ]; then
-        if [ "$overwrite" = false ]; then
-            # Can't overwrite copy_file in place, therefore use a temp file
-            local temp_file="${input_file%.*}_copy_temp.$input_extension"
-            ffmpeg -y -i "$copy_file" -c copy -map 0 -c:a:$stream_index ac3 -b:a:$stream_index $bitrate_channels -metadata:s:a:$stream_index "$stream_title" "$temp_file"
-            mv "$temp_file" "$copy_file"
-            return
-        fi
-
-        # Overwrite enabled, so replace the original with the copy, so it can be used as input to create the new copy below
-        mv "$copy_file" "$input_file"
-    fi
-
-    ffmpeg -i "$input_file" -c copy -map 0 -c:a:$stream_index ac3 -b:a:$stream_index $bitrate_channels -metadata:s:a:$stream_index "$stream_title" "$copy_file"
-}
-
 process_file() {
-    local input_file="$1"
+	local input_file="$1"
 
-    if [ -d "$input_file" ]; then
-        if [ "$traverse_subdirs" = true ]; then
-            echo "Traversing directory $input_file"
-            cd "$input_file"
-            for sub_file in *; do
-                process_file "$sub_file"
-            done
-            cd ..
-        else
-            echo "Skipping directory $input_file"
-        fi
-        return
-    fi
+	if [ -d "$input_file" ]; then
+		if [ "$traverse_subdirs" = true ]; then
+			echo "Traversing directory $input_file"
+			cd "$input_file"
+			for sub_file in *; do
+				process_file "$sub_file"
+			done
+			cd ..
+		else
+			echo "Skipping directory $input_file"
+		fi
+		return
+	fi
 
-    if [ ! -f "$input_file" ]; then
-        echo "Skipping non-file $input_file"
-        return
-    fi
+	if [ ! -f "$input_file" ]; then
+		echo "Skipping non-file $input_file"
+		return
+	fi
 
-    # Redirect invalid input file errors to /dev/null. In that case the streams count will be 0 and the file will be skipped.
-    local audio_streams=$(ffprobe -v error -select_streams a -show_entries stream=index -of default=noprint_wrappers=1:nokey=1 "$input_file" 2>/dev/null | wc -l)
-    if [ "$audio_streams" -eq 0 ]; then
-        return
-    fi
+	# Redirect invalid input file errors to /dev/null. In that case the streams count will be 0 and the file will be skipped.
+	local audio_streams=$(ffprobe -v error -select_streams a -show_entries stream=index -of default=noprint_wrappers=1:nokey=1 "$input_file" 2>/dev/null | wc -l)
+	if [ "$audio_streams" -eq 0 ]; then
+		return
+	fi
 
-    local input_extension="${input_file##*.}"
-    local copy_file="${input_file%.*}_copy.$input_extension"
+	local input_extension="${input_file##*.}"
+	local copy_file="${input_file%.*}_copy.$input_extension"
 
-    for stream_index in $(seq 0 $((audio_streams - 1))); do
-        local audio_format=$(ffprobe -v error -select_streams a:$stream_index -show_entries stream=codec_name -of default=noprint_wrappers=1:nokey=1 "$input_file")
-        local lang=$(ffprobe -v error -select_streams a:$stream_index -show_entries stream_tags=language -of default=noprint_wrappers=1:nokey=1 "$input_file")
+	local base_ffmpeg_cmd="ffmpeg -i \"$input_file\" -c copy -map 0:v -map 0:s "
+	local main_lang_map=""      # Used to make sure that main language is the first audio stream
+	local other_lang_maps=""    # Used for all other audio streams
+	local main_stream_set=false # Flag to check if main audio stream is set already
+	local need_transcode=false  # Flag to check if any audio streams need to be transcoded (only if true ffmpeg will be executed)
 
-        # Check if the language of the current audio stream is a desired language
-        # Adding spaces around ${desired_languages[@]} and ${lang} ensures that we only match whole words.
-        if [[ " ${desired_languages[@]} " =~ " ${lang} " ]]; then
-            if [ "$audio_format" != "eac3" ] && [ "$audio_format" != "ac3" ]; then
-                echo "Transcoding audio stream $stream_index in '$input_file' from $audio_format to eac3"
-                transcode_audio "$input_file" "$copy_file" "$stream_index" "$lang"
-            else
-                echo "$input_file audio stream $stream_index is already in $audio_format format"
-            fi
-        else
-            echo "Skipping audio stream $stream_index in '$input_file' with language '$lang'"
-        fi
-    done
+	for stream_index in $(seq 0 $((audio_streams - 1))); do
+		local lang=$(ffprobe -v error -select_streams a:$stream_index -show_entries stream_tags=language -of default=noprint_wrappers=1:nokey=1 "$input_file")
+		local audio_format=$(ffprobe -v error -select_streams a:$stream_index -show_entries stream=codec_name -of default=noprint_wrappers=1:nokey=1 "$input_file")
+		local channels=$(ffprobe -v error -select_streams a:$stream_index -show_entries stream=channels -of default=noprint_wrappers=1:nokey=1 "$input_file")
 
-    if [ -f "$copy_file" ] && [ "$overwrite" = true ]; then
-        mv "$copy_file" "$input_file"
-    fi
+		if [[ " ${desired_languages[@]} " =~ " ${lang} " ]]; then
+			if [ "$lang" = "$main_language" ] && [ "$main_stream_set" = false ]; then
+				main_lang_map="-map 0:a:$stream_index "
+				if [ "$audio_format" != "eac3" ] && [ "$audio_format" != "ac3" ]; then
+					need_transcode=true
+					if [ "$channels" -eq 2 ]; then
+						main_lang_map+="-c:a:$stream_index ac3 -b:a:$stream_index 224k -metadata:s:a:0 title=\"$lang AC3 2.0 @ 224k\" "
+					else
+						main_lang_map+="-c:a:$stream_index ac3 -b:a:$stream_index 640k -metadata:s:a:0 title=\"$lang AC3 5.1 @ 640k\" "
+					fi
+				else
+					main_lang_map+="-c:a:$stream_index copy "
+				fi
+				main_stream_set=true
+			else
+				other_lang_maps+="-map 0:a:$stream_index "
+				local offsetted_index=$(($stream_index + 1)) # 0 will be the main audio stream, so we start from 1 for other streams
+				if [ "$audio_format" != "eac3" ] && [ "$audio_format" != "ac3" ]; then
+					need_transcode=true
+					if [ "$channels" -eq 2 ]; then
+						other_lang_maps+="-c:a:$offsetted_index ac3 -b:a:$offsetted_index 224k -metadata:s:a:$offsetted_index title=\"$lang AC3 2.0 @ 224k\" "
+					else
+						other_lang_maps+="-c:a:$offsetted_index ac3 -b:a:$offsetted_index 640k -metadata:s:a:$offsetted_index title=\"$lang AC3 5.1 @ 640k\" "
+					fi
+				else
+					other_lang_maps+="-c:a:$offsetted_index copy "
+				fi
+				other_lang_maps+="-disposition:a:$offsetted_index 0 " # Ensure non-main audio streams are not default
+			fi
+		else
+			echo "Skipping audio stream $stream_index in '$input_file' with language '$lang'"
+		fi
+	done
+
+	if [[ "$need_transcode" = true ]]; then
+		local ffmpeg_cmd="$base_ffmpeg_cmd$main_lang_map$other_lang_maps-disposition:a:0 default \"$copy_file\""
+		echo "Running: $ffmpeg_cmd"
+		eval $ffmpeg_cmd
+	fi
+
+	if [ -f "$copy_file" ] && [ "$overwrite" = true ]; then
+		mv "$copy_file" "$input_file"
+	fi
 }
 
 # Support Sonarr/Radarr post processing scripts
 # File paths are passed as environment variables (sonarr_episodefile_path and radarr_moviefile_path)
 if [ -f "$sonarr_episodefile_path" ]; then
-    echo "Processing file from Sonarr: $sonarr_episodefile_path"
-    overwrite=true # Remove this if you want to keep the original file
-    process_file "$sonarr_episodefile_path"
-    exit 0
+	echo "Processing file from Sonarr: $sonarr_episodefile_path"
+	overwrite=true # Remove this if you want to keep the original file
+	process_file "$sonarr_episodefile_path"
+	exit 0
 elif [ -f "$radarr_moviefile_path" ]; then
-    echo "Processing file from Radarr: $radarr_moviefile_path"
-    overwrite=true # Remove this if you want to keep the original file
-    process_file "$radarr_moviefile_path"
-    exit 0
+	echo "Processing file from Radarr: $radarr_moviefile_path"
+	overwrite=true # Remove this if you want to keep the original file
+	process_file "$radarr_moviefile_path"
+	exit 0
 fi
 
 # Arguments take precedence, if none are passed, process all files in the current dir
 if [ $# -gt 0 ]; then
-    for input_file in "$@"; do
-        process_file "$input_file"
-    done
+	for input_file in "$@"; do
+		process_file "$input_file"
+	done
 else
-    for input_file in *; do
-        process_file "$input_file"
-    done
+	for input_file in *; do
+		process_file "$input_file"
+	done
 fi
