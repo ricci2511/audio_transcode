@@ -29,6 +29,7 @@
 # - FFmpeg and ffprobe must be installed and accessible in your PATH.
 #####################################################################
 
+desired_audio_formats=("eac3" "ac3")        # Audio formats to just copy (no transcoding)
 desired_languages=("eng" "ger" "spa" "jpn") # Any other lang is skipped
 main_language="ger"                         # Main language for audio track selection (default)
 
@@ -115,7 +116,7 @@ process_file() {
 		if [[ " ${desired_languages[@]} " =~ " ${lang} " ]]; then
 			if [ "$lang" = "$main_language" ] && [ "$main_stream_set" = false ]; then
 				main_lang_map="-map 0:a:$stream_index "
-				if [ "$audio_format" != "eac3" ] && [ "$audio_format" != "ac3" ]; then
+				if [[ ! " ${desired_audio_formats[@]} " =~ " ${audio_format} " ]]; then
 					need_transcode=true
 					if [ "$channels" -eq 2 ]; then
 						main_lang_map+="-c:a:$stream_index ac3 -b:a:$stream_index 224k -metadata:s:a:0 title=\"$lang AC3 2.0 @ 224k\" "
@@ -137,7 +138,7 @@ process_file() {
 					offsetted_index=$((audio_streams - 1)) # Ensure that the offsetted index is not out of bounds
 				fi
 
-				if [ "$audio_format" != "eac3" ] && [ "$audio_format" != "ac3" ]; then
+				if [[ ! " ${desired_audio_formats[@]} " =~ " ${audio_format} " ]]; then
 					need_transcode=true
 					if [ "$channels" -eq 2 ]; then
 						other_lang_maps+="-c:a:$offsetted_index ac3 -b:a:$offsetted_index 224k -metadata:s:a:$offsetted_index title=\"$lang AC3 2.0 @ 224k\" "
