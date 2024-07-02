@@ -97,6 +97,16 @@ process_file() {
 	local main_stream_set=false # Flag to check if main audio stream is set already
 	local need_transcode=false  # Flag to check if any audio streams need to be transcoded (only if true ffmpeg will be executed)
 
+	# Check if main language exists in the audio streams
+	local main_lang_exists=false
+	for stream_index in $(seq 0 $((audio_streams - 1))); do
+		local lang=$(ffprobe -v error -select_streams a:$stream_index -show_entries stream_tags=language -of default=noprint_wrappers=1:nokey=1 "$input_file")
+		if [ "$lang" = "$main_language" ]; then
+			main_lang_exists=true
+			break
+		fi
+	done
+
 	for stream_index in $(seq 0 $((audio_streams - 1))); do
 		local lang=$(ffprobe -v error -select_streams a:$stream_index -show_entries stream_tags=language -of default=noprint_wrappers=1:nokey=1 "$input_file")
 		local audio_format=$(ffprobe -v error -select_streams a:$stream_index -show_entries stream=codec_name -of default=noprint_wrappers=1:nokey=1 "$input_file")
@@ -118,7 +128,15 @@ process_file() {
 				main_stream_set=true
 			else
 				other_lang_maps+="-map 0:a:$stream_index "
-				local offsetted_index=$(($stream_index + 1)) # 0 will be the main audio stream, so we start from 1 for other streams
+
+				local offsetted_index=$stream_index
+				if [ "$main_lang_exists" = true ]; then
+					offsetted_index=$((stream_index + 1)) # Increment by 1 if main language exists since that will be audio stream 0
+				fi
+				if [ $offsetted_index -gt $((audio_streams - 1)) ]; then
+					offsetted_index=$((audio_streams - 1)) # Ensure that the offsetted index is not out of bounds
+				fi
+
 				if [ "$audio_format" != "eac3" ] && [ "$audio_format" != "ac3" ]; then
 					need_transcode=true
 					if [ "$channels" -eq 2 ]; then
