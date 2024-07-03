@@ -118,10 +118,11 @@ process_file() {
 				main_lang_map="-map 0:a:$stream_index "
 				if [[ ! " ${desired_audio_formats[@]} " =~ " ${audio_format} " ]]; then
 					need_transcode=true
+					# Using 0 since we're setting the main audio stream and it always will be the first
 					if [ "$channels" -eq 2 ]; then
-						main_lang_map+="-c:a:$stream_index ac3 -b:a:$stream_index 224k -metadata:s:a:0 title=\"$lang AC3 2.0 @ 224k\" "
+						main_lang_map+="-c:a:0 ac3 -b:a:0 224k -metadata:s:a:0 title=\"$lang AC3 2.0 @ 224k\" "
 					else
-						main_lang_map+="-c:a:$stream_index ac3 -b:a:$stream_index 640k -metadata:s:a:0 title=\"$lang AC3 5.1 @ 640k\" "
+						main_lang_map+="-c:a:0 ac3 -b:a:0 640k -metadata:s:a:0 title=\"$lang AC3 5.1 @ 640k\" "
 					fi
 				else
 					main_lang_map+="-c:a:$stream_index copy "
