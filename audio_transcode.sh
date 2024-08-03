@@ -3,8 +3,9 @@
 #####################################################################
 # Audio Transcoding Script
 #
-# This script transcodes audio streams in video files to ac3 format with 640k bitrate.
+# This script aims to transcode audio streams in video files to ac3 format with 640k bitrate.
 # Stereo audio streams are transcoded to ac3 format with 224k bitrate.
+# 3-4 channel audio streams are transcoded to ac3 format with 448k bitrate.
 # It utilizes FFmpeg for audio transcoding and processing.
 #
 # Usage:
@@ -19,14 +20,15 @@
 #   ./audio_transcode.sh -r /path/to/movies
 #
 # Notes:
-# - If no arguments are passed, all files in the current directory are processed.
+# - If no arguments are passed, only mkv or mp4 files in the current directory are processed.
 # - By default, the script preserves video and subtitle streams.
 # - Only audio streams with languages specified in the `desired_languages` array are included in the output.
-# - You can customize the audio transcoding settings within the script.
+# - Supports SABnzbd post-processing scripts for completed downloads.
 # - Supports Sonarr/Radarr custom scripts for Import/Upgrade events.
+# - You can customize the audio transcoding settings within the script.
 #
 # Dependencies:
-# - FFmpeg and ffprobe must be installed and accessible in your PATH.
+# - ffmpeg and ffprobe must be accessible in your PATH.
 #####################################################################
 
 desired_audio_formats=("eac3" "ac3")        # Audio formats to just copy (no transcoding)
@@ -67,7 +69,7 @@ process_file() {
   if [ -d "$input_file" ]; then
     if [ "$traverse_subdirs" = true ]; then
       echo "Traversing directory $input_file"
-      cd "$input_file"
+      cd "$input_file" || return
       for sub_file in *; do
         process_file "$sub_file"
       done
@@ -119,8 +121,10 @@ process_file() {
         if [[ ! " ${desired_audio_formats[@]} " =~ " ${audio_format} " ]]; then
           need_transcode=true
           # Using 0 since we're setting the main audio stream and it always will be the first
-          if [ "$channels" -eq 2 ]; then
+          if [ "$channels" -le 2 ]; then
             main_lang_map+="-c:a:0 ac3 -b:a:0 224k -metadata:s:a:0 title=\"$lang AC3 2.0 @ 224k\" "
+          elif [ "$channels" -le 4 ]; then
+            main_lang_map+="-c:a:0 ac3 -b:a:0 448k -metadata:s:a:0 title=\"$lang AC3 4.0 @ 448k\" "
           else
             main_lang_map+="-c:a:0 ac3 -b:a:0 640k -metadata:s:a:0 title=\"$lang AC3 5.1 @ 640k\" "
           fi
@@ -167,6 +171,24 @@ process_file() {
   fi
 }
 
+# Support SABnzbd post processing scripts
+# SAB_COMPLETE_DIR is set by SABnzbd and contains the abs path to the completed download directory
+if [ -n "$SAB_COMPLETE_DIR" ]; then
+  cd "$SAB_COMPLETE_DIR" || exit 1
+
+  # Make ffmpeg/ffprobe available for more shell environments (sabnzbd scripts PATH scope is limited)
+  export PATH=$PATH:/opt/homebrew/bin:/lsiopy/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+  traverse_subdirs=true # In case release contains video files in subdirs
+  overwrite=true        # Remove this if you want to keep the original
+
+  for input_file in *.mkv *.mp4; do
+    process_file "$input_file"
+  done
+
+  exit 0
+fi
+
 # Support Sonarr/Radarr post processing scripts
 # File paths are passed as environment variables (sonarr_episodefile_path and radarr_moviefile_path)
 if [ -f "$sonarr_episodefile_path" ]; then
@@ -187,7 +209,7 @@ if [ $# -gt 0 ]; then
     process_file "$input_file"
   done
 else
-  for input_file in *; do
+  for input_file in *.mkv *.mp4; do
     process_file "$input_file"
   done
 fi
