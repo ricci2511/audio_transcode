@@ -122,11 +122,11 @@ process_file() {
           need_transcode=true
           # Using 0 since we're setting the main audio stream and it always will be the first
           if [ "$channels" -le 2 ]; then
-            main_lang_map+="-c:a:0 ac3 -b:a:0 224k -metadata:s:a:0 title=\"$lang AC3 2.0 @ 224k\" "
+            main_lang_map+="-c:a:0 ac3 -ac 2 -b:a:0 224k -metadata:s:a:0 title=\"$lang AC3 2.0 @ 224k\" "
           elif [ "$channels" -le 4 ]; then
-            main_lang_map+="-c:a:0 ac3 -b:a:0 448k -metadata:s:a:0 title=\"$lang AC3 4.0 @ 448k\" "
+            main_lang_map+="-c:a:0 ac3 -ac 4 -b:a:0 448k -metadata:s:a:0 title=\"$lang AC3 4.0 @ 448k\" "
           else
-            main_lang_map+="-c:a:0 ac3 -b:a:0 640k -metadata:s:a:0 title=\"$lang AC3 5.1 @ 640k\" "
+            main_lang_map+="-c:a:0 ac3 -ac 6 -b:a:0 640k -metadata:s:a:0 title=\"$lang AC3 5.1 @ 640k\" "
           fi
         else
           main_lang_map+="-c:a:$stream_index copy "
@@ -145,10 +145,12 @@ process_file() {
 
         if [[ ! " ${desired_audio_formats[@]} " =~ " ${audio_format} " ]]; then
           need_transcode=true
-          if [ "$channels" -eq 2 ]; then
-            other_lang_maps+="-c:a:$offsetted_index ac3 -b:a:$offsetted_index 224k -metadata:s:a:$offsetted_index title=\"$lang AC3 2.0 @ 224k\" "
+          if [ "$channels" -le 2 ]; then
+            other_lang_maps+="-c:a:$offsetted_index ac3 -ac 2 -b:a:$offsetted_index 224k -metadata:s:a:$offsetted_index title=\"$lang AC3 2.0 @ 224k\" "
+          elif [ "$channels" -le 4 ]; then
+            other_lang_maps+="-c:a:$offsetted_index ac3 -ac 4 -b:a:$offsetted_index 448k -metadata:s:a:$offsetted_index title=\"$lang AC3 4.0 @ 448k\" "
           else
-            other_lang_maps+="-c:a:$offsetted_index ac3 -b:a:$offsetted_index 640k -metadata:s:a:$offsetted_index title=\"$lang AC3 5.1 @ 640k\" "
+            other_lang_maps+="-c:a:$offsetted_index ac3 -ac 6 -b:a:$offsetted_index 640k -metadata:s:a:$offsetted_index title=\"$lang AC3 5.1 @ 640k\" "
           fi
         else
           other_lang_maps+="-c:a:$offsetted_index copy "
