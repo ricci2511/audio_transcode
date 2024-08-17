@@ -135,12 +135,10 @@ process_file() {
       else
         other_lang_maps+="-map 0:a:$stream_index "
 
+        # Offset by 1 if main lang exists, since 0 is reserved for main audio stream
         local offsetted_index=$stream_index
-        if [ "$main_lang_exists" = true ]; then
-          offsetted_index=$((stream_index + 1)) # Increment by 1 if main language exists since that will be audio stream 0
-        fi
-        if [ $offsetted_index -gt $((audio_streams - 1)) ]; then
-          offsetted_index=$((audio_streams - 1)) # Ensure that the offsetted index is not out of bounds
+        if [ "$main_lang_exists" = true ] && [ "$stream_index" -eq 0 ]; then
+          offsetted_index=1
         fi
 
         if [[ ! " ${desired_audio_formats[@]} " =~ " ${audio_format} " ]]; then
