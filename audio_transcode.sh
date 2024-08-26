@@ -39,43 +39,53 @@ overwrite=false        # -o
 traverse_subdirs=false # -r
 
 # Parse command line arguments
-while :; do
+while (($# > 0)); do
   case "$1" in
-  -o)
-    overwrite=true
-    shift
-    ;;
-  -r)
-    traverse_subdirs=true
-    shift
-    ;;
-  -*)
-    echo "Unknown option: $1"
-    exit 1
-    ;;
-  *)
-    break
-    ;;
+  -o) overwrite=true ;;
+  -r) traverse_subdirs=true ;;
+  -*) echo "Unknown option: $1" && exit 1 ;;
+  *) break ;;
   esac
+  shift
 done
 
 if [ $overwrite = true ]; then
   echo "WARNING: passed -o argument, original files will be overwritten"
 fi
 
+# Function to determine the transcode options based on channels and index
+get_transcode_options() {
+  local codec_name="$1"
+  local channels="$2"
+  local index="$3"
+  local options=""
+
+  if [[ ! " ${desired_audio_formats[*]} " == *"$codec_name"* ]]; then
+    case "$channels" in
+    1) options="-c:a:$index ac3 -ac 1 -b:a:$index 128k -metadata:s:a:$index title=\"$language AC3 1.0 @ 128k\"" ;;
+    2) options="-c:a:$index ac3 -ac 2 -b:a:$index 224k -metadata:s:a:$index title=\"$language AC3 2.0 @ 224k\"" ;;
+    3) options="-c:a:$index ac3 -ac 3 -b:a:$index 320k -metadata:s:a:$index title=\"$language AC3 3.0 @ 320k\"" ;;
+    4) options="-c:a:$index ac3 -ac 4 -b:a:$index 448k -metadata:s:a:$index title=\"$language AC3 4.0 @ 448k\"" ;;
+    *) options="-c:a:$index ac3 -ac 6 -b:a:$index 640k -metadata:s:a:$index title=\"$language AC3 5.1 @ 640k\"" ;;
+    esac
+  else
+    options="-c:a:$index copy"
+  fi
+
+  echo "$options"
+}
+
 process_file() {
   local input_file="$1"
 
   if [ -d "$input_file" ]; then
-    if [ "$traverse_subdirs" = true ]; then
-      echo "Traversing directory $input_file"
-      cd "$input_file" || return
-      for sub_file in *; do
+    if $traverse_subdirs; then
+      echo "Traversing directory: $input_file"
+      for sub_file in "$input_file"/*; do
         process_file "$sub_file"
       done
-      cd ..
     else
-      echo "Skipping directory $input_file"
+      echo "Skipping directory: $input_file"
     fi
     return
   fi
@@ -85,89 +95,71 @@ process_file() {
     return
   fi
 
-  # Redirect invalid input file errors to /dev/null. In that case the streams count will be 0 and the file will be skipped.
-  local audio_streams=$(ffprobe -v error -select_streams a -show_entries stream=index -of default=noprint_wrappers=1:nokey=1 "$input_file" 2>/dev/null | wc -l)
+  # Grab all relevant audio streams info (index, codec, channels, language)
+  local ffprobe_output=$(ffprobe -v error -select_streams a -show_entries stream=index,codec_name,channels:stream_tags=language -of csv=p=0 "$input_file")
+  echo "Ffprobe output: $ffprobe_output"
+
+  local audio_streams=$(echo "$ffprobe_output" | wc -l)
   if [ "$audio_streams" -eq 0 ]; then
     return
   fi
 
   local input_extension="${input_file##*.}"
-  local copy_file="${input_file%.*}_copy.$input_extension"
+  local output_file="${input_file%.*}_transcoded.$input_extension"
 
-  local base_ffmpeg_cmd="ffmpeg -i \"$input_file\" -c copy -map 0:v -map 0:s "
-  local main_lang_map=""      # Used to make sure that main language is the first audio stream
-  local other_lang_maps=""    # Used for all other audio streams
-  local main_stream_set=false # Flag to check if main audio stream is set already
-  local need_transcode=false  # Flag to check if any audio streams need to be transcoded (only if true ffmpeg will be executed)
+  local ffmpeg_cmd="ffmpeg -i \"$input_file\" -c copy -map 0:v -map 0:s "
+  local main_lang_map=""       # Used to make sure that main language is the first audio stream
+  local other_lang_maps=""     # Used for all other audio streams
+  local main_lang_exists=false # Flag to check if main language exists within the audio streams
+  local main_stream_set=false  # Flag to check if main audio stream is set already
+  local need_transcode=false   # Flag to check if any audio streams need to be transcoded (only if true ffmpeg will be executed)
 
-  # Check if main language exists in the audio streams
-  local main_lang_exists=false
-  for stream_index in $(seq 0 $((audio_streams - 1))); do
-    local lang=$(ffprobe -v error -select_streams a:$stream_index -show_entries stream_tags=language -of default=noprint_wrappers=1:nokey=1 "$input_file")
-    if [ "$lang" = "$main_language" ]; then
-      main_lang_exists=true
-      break
-    fi
-  done
-
-  for stream_index in $(seq 0 $((audio_streams - 1))); do
-    local lang=$(ffprobe -v error -select_streams a:$stream_index -show_entries stream_tags=language -of default=noprint_wrappers=1:nokey=1 "$input_file")
-    local audio_format=$(ffprobe -v error -select_streams a:$stream_index -show_entries stream=codec_name -of default=noprint_wrappers=1:nokey=1 "$input_file")
-    local channels=$(ffprobe -v error -select_streams a:$stream_index -show_entries stream=channels -of default=noprint_wrappers=1:nokey=1 "$input_file")
-
-    if [[ " ${desired_languages[@]} " =~ " ${lang} " ]]; then
-      if [ "$lang" = "$main_language" ] && [ "$main_stream_set" = false ]; then
-        main_lang_map="-map 0:a:$stream_index "
-        if [[ ! " ${desired_audio_formats[@]} " =~ " ${audio_format} " ]]; then
-          need_transcode=true
-          # Using 0 since we're setting the main audio stream and it always will be the first
-          if [ "$channels" -le 2 ]; then
-            main_lang_map+="-c:a:0 ac3 -ac 2 -b:a:0 224k -metadata:s:a:0 title=\"$lang AC3 2.0 @ 224k\" "
-          elif [ "$channels" -le 4 ]; then
-            main_lang_map+="-c:a:0 ac3 -ac 4 -b:a:0 448k -metadata:s:a:0 title=\"$lang AC3 4.0 @ 448k\" "
-          else
-            main_lang_map+="-c:a:0 ac3 -ac 6 -b:a:0 640k -metadata:s:a:0 title=\"$lang AC3 5.1 @ 640k\" "
-          fi
-        else
-          main_lang_map+="-c:a:$stream_index copy "
-        fi
-        main_stream_set=true
-      else
-        other_lang_maps+="-map 0:a:$stream_index "
-
-        # Offset by 1 if main lang exists, since 0 is reserved for main audio stream
-        local offsetted_index=$stream_index
-        if [ "$main_lang_exists" = true ] && [ "$stream_index" -eq 0 ]; then
-          offsetted_index=1
-        fi
-
-        if [[ ! " ${desired_audio_formats[@]} " =~ " ${audio_format} " ]]; then
-          need_transcode=true
-          if [ "$channels" -le 2 ]; then
-            other_lang_maps+="-c:a:$offsetted_index ac3 -ac 2 -b:a:$offsetted_index 224k -metadata:s:a:$offsetted_index title=\"$lang AC3 2.0 @ 224k\" "
-          elif [ "$channels" -le 4 ]; then
-            other_lang_maps+="-c:a:$offsetted_index ac3 -ac 4 -b:a:$offsetted_index 448k -metadata:s:a:$offsetted_index title=\"$lang AC3 4.0 @ 448k\" "
-          else
-            other_lang_maps+="-c:a:$offsetted_index ac3 -ac 6 -b:a:$offsetted_index 640k -metadata:s:a:$offsetted_index title=\"$lang AC3 5.1 @ 640k\" "
-          fi
-        else
-          other_lang_maps+="-c:a:$offsetted_index copy "
-        fi
-        other_lang_maps+="-disposition:a:$offsetted_index 0 " # Ensure non-main audio streams are not default
-      fi
-    else
-      echo "Skipping audio stream $stream_index in '$input_file' with language '$lang'"
-    fi
-  done
-
-  if [[ "$need_transcode" = true ]]; then
-    local ffmpeg_cmd="$base_ffmpeg_cmd$main_lang_map$other_lang_maps-disposition:a:0 default \"$copy_file\""
-    echo "Running: $ffmpeg_cmd"
-    eval $ffmpeg_cmd
+  # Check if main language exists within the audio streams
+  if echo "$ffprobe_output" | grep -q "$main_language"; then
+    main_lang_exists=true
+  else
+    main_lang_exists=false
   fi
 
-  if [ -f "$copy_file" ] && [ "$overwrite" = true ]; then
-    mv "$copy_file" "$input_file"
+  while IFS=, read -r index codec_name channels language; do
+    local stream_index=$((index - 1)) # FFmpeg stream index starts from 0
+
+    if [[ " ${desired_languages[*]} " == *" $language "* ]]; then
+      local stream_map="-map 0:a:$stream_index "
+      local transcode_options=""
+
+      if [[ "$language" == "$main_language" && $main_stream_set == false ]]; then
+        main_lang_map="$stream_map"
+        transcode_options=$(get_transcode_options "$codec_name" "$channels" 0)
+        main_lang_map+="$transcode_options"
+        main_stream_set=true
+      else
+        local mapped_index=$stream_index
+        if $main_lang_exists && [ "$stream_index" -eq 0 ]; then
+          mapped_index=1 # 0 index is reserved for the main audio stream
+        fi
+        other_lang_maps+="$stream_map"
+        transcode_options=$(get_transcode_options "$codec_name" "$channels" "$mapped_index")
+        other_lang_maps+="$transcode_options -disposition:a:$mapped_index 0 " # Ensure non-main audio streams are not default
+      fi
+
+      if [[ -n "$transcode_options" ]]; then
+        need_transcode=true
+      fi
+    else
+      echo "Skipping audio stream $index in '$input_file' with language '$language'"
+    fi
+    stream_index=$((stream_index + 1))
+  done <<<"$ffprobe_output"
+
+  if $need_transcode; then
+    ffmpeg_cmd+="$main_lang_map $other_lang_maps -disposition:a:0 default \"$output_file\""
+    echo "Running: $ffmpeg_cmd"
+    eval "$ffmpeg_cmd"
+  fi
+
+  if [ -f "$output_file" ] && $overwrite; then
+    mv "$output_file" "$input_file"
   fi
 }
 
