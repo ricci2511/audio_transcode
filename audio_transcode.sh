@@ -96,11 +96,11 @@ process_file() {
   fi
 
   # Grab all relevant audio streams info (index, codec, channels, language)
-  local ffprobe_output=$(ffprobe -v error -select_streams a -show_entries stream=index,codec_name,channels:stream_tags=language -of csv=p=0 "$input_file")
+  local ffprobe_output
+  ffprobe_output=$(ffprobe -v error -select_streams a -show_entries stream=index,codec_name,channels:stream_tags=language -of csv=p=0 "$input_file")
 
-  local audio_streams=$(echo "$ffprobe_output" | wc -l)
-  if [ "$audio_streams" -eq 0 ]; then
-    return
+  if [ "$(echo "$ffprobe_output" | wc -l)" -eq 0 ]; then
+    return # Empty output means no audio streams found
   fi
 
   local input_extension="${input_file##*.}"
@@ -116,8 +116,6 @@ process_file() {
   # Check if main language exists within the audio streams
   if echo "$ffprobe_output" | grep -q "$main_language"; then
     main_lang_exists=true
-  else
-    main_lang_exists=false
   fi
 
   while IFS=, read -r index codec_name channels language; do
@@ -142,7 +140,7 @@ process_file() {
         other_lang_maps+="$transcode_options -disposition:a:$mapped_index 0 " # Ensure non-main audio streams are not default
       fi
 
-      if [[ -n "$transcode_options" ]]; then
+      if [[ "$transcode_options" != *"copy"* ]]; then
         need_transcode=true
       fi
     else
