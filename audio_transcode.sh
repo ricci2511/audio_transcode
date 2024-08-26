@@ -97,7 +97,6 @@ process_file() {
 
   # Grab all relevant audio streams info (index, codec, channels, language)
   local ffprobe_output=$(ffprobe -v error -select_streams a -show_entries stream=index,codec_name,channels:stream_tags=language -of csv=p=0 "$input_file")
-  echo "Ffprobe output: $ffprobe_output"
 
   local audio_streams=$(echo "$ffprobe_output" | wc -l)
   if [ "$audio_streams" -eq 0 ]; then
@@ -107,7 +106,7 @@ process_file() {
   local input_extension="${input_file##*.}"
   local output_file="${input_file%.*}_transcoded.$input_extension"
 
-  local ffmpeg_cmd="ffmpeg -i \"$input_file\" -c copy -map 0:v -map 0:s "
+  local ffmpeg_cmd="ffmpeg -loglevel warning -stats -i \"$input_file\" -c copy -map 0:v -map 0:s "
   local main_lang_map=""       # Used to make sure that main language is the first audio stream
   local other_lang_maps=""     # Used for all other audio streams
   local main_lang_exists=false # Flag to check if main language exists within the audio streams
