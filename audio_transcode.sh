@@ -190,22 +190,32 @@ process_file() {
   fi
 }
 
+process_video_files() {
+    local directory="$1"
+    local supported_extensions=("mkv" "mp4")
+    
+    cd "$directory" || exit 1
+    
+    for ext in "${supported_extensions[@]}"; do
+        if compgen -G "*.$ext" > /dev/null; then
+            for input_file in *."$ext"; do
+                echo "Processing file: $input_file"
+                process_file "$input_file"
+            done
+        fi
+    done
+}
+
 # Support SABnzbd post processing scripts
-# SAB_COMPLETE_DIR is set by SABnzbd and contains the abs path to the completed download directory
 if [ -n "$SAB_COMPLETE_DIR" ]; then
-  cd "$SAB_COMPLETE_DIR" || exit 1
+    # Make ffmpeg/ffprobe available for more shell environments
+    export PATH=$PATH:/opt/homebrew/bin:/lsiopy/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
-  # Make ffmpeg/ffprobe available for more shell environments (sabnzbd scripts PATH scope is limited)
-  export PATH=$PATH:/opt/homebrew/bin:/lsiopy/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-
-  traverse_subdirs=true # In case release contains video files in subdirs
-  overwrite=true        # Remove this if you want to keep the original
-
-  for input_file in *.mkv *.mp4; do
-    process_file "$input_file"
-  done
-
-  exit 0
+    traverse_subdirs=true
+    overwrite=true
+    
+    process_video_files "$SAB_COMPLETE_DIR"
+    exit 0
 fi
 
 # Support Sonarr/Radarr post processing scripts
@@ -225,11 +235,9 @@ fi
 
 # Arguments take precedence, if none are passed, process all files in the current dir
 if [ $# -gt 0 ]; then
-  for input_file in "$@"; do
-    process_file "$input_file"
-  done
+    for input_file in "$@"; do
+        process_file "$input_file"
+    done
 else
-  for input_file in *.mkv *.mp4; do
-    process_file "$input_file"
-  done
+    process_video_files "."
 fi
