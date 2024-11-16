@@ -3,9 +3,15 @@
 #####################################################################
 # Audio Transcoding Script
 #
-# This script aims to transcode audio streams in video files to ac3 format with 640k bitrate.
-# Stereo audio streams are transcoded to ac3 format with 224k bitrate.
-# 3-4 channel audio streams are transcoded to ac3 format with 448k bitrate.
+# This script transcodes audio streams in video files to AC3 format using optimal
+# bitrates based on the number of channels:
+#   - Mono (1.0):     AC3 @ 128k
+#   - Stereo (2.0):   AC3 @ 224k
+#   - 3.0 channels:   AC3 @ 320k
+#   - 4.0 channels:   AC3 @ 448k
+#   - 5.1 channels:   AC3 @ 640k
+#
+# Existing AC3 and E-AC3 streams are preserved (copied).
 # It utilizes FFmpeg for audio transcoding and processing.
 #
 # Usage:
@@ -22,6 +28,7 @@
 # Notes:
 # - If no arguments are passed, only mkv or mp4 files in the current directory are processed.
 # - By default, the script preserves video and subtitle streams.
+# - ASS/SSA subtitles are automatically converted to text/SRT format.
 # - Only audio streams with languages specified in the `desired_languages` array are included in the output.
 # - Supports SABnzbd post-processing scripts for completed downloads.
 # - Supports Sonarr/Radarr custom scripts for Import/Upgrade events.
@@ -75,9 +82,59 @@ get_transcode_options() {
   echo "$options"
 }
 
+process_subtitles() {
+  local subtitle_info="$1"
+  local maps=""
+  local need_transcode=false
+  local sub_relative_index=0
+
+  while IFS=, read -r sub_index codec_name; do
+    if [[ "$codec_name" == "ass" ]]; then
+      maps+="-map 0:$sub_index? -c:s:$sub_relative_index text "
+      need_transcode=true
+    else
+      maps+="-map 0:$sub_index? -c:s:$sub_relative_index copy "
+    fi
+    sub_relative_index=$((sub_relative_index + 1))
+  done <<<"$subtitle_info"
+
+  echo "$maps|$need_transcode"
+}
+
+process_audio() {
+  local audio_info="$1"
+  local maps=""
+  local need_transcode=false
+  local audio_relative_index=0
+  local main_stream_set=false
+
+  while IFS=, read -r index codec_name channels language; do
+    if [[ " ${desired_languages[*]} " == *" $language "* ]]; then
+      local transcode_options=""
+
+      if [[ "$language" == "$main_language" && $main_stream_set == false ]]; then
+        transcode_options=$(get_transcode_options "$codec_name" "$channels" "$audio_relative_index")
+        maps+="-map 0:$index $transcode_options -disposition:a:$audio_relative_index default "
+        main_stream_set=true
+      else
+        transcode_options=$(get_transcode_options "$codec_name" "$channels" "$audio_relative_index")
+        maps+="-map 0:$index $transcode_options -disposition:a:$audio_relative_index 0 "
+      fi
+      audio_relative_index=$((audio_relative_index + 1))
+
+      if [[ "$transcode_options" != *"copy"* ]]; then
+        need_transcode=true
+      fi
+    fi
+  done <<<"$audio_info"
+
+  echo "$maps|$need_transcode"
+}
+
 process_file() {
   local input_file="$1"
 
+  # Handle directory traversal
   if [ -d "$input_file" ]; then
     if $traverse_subdirs; then
       echo "Traversing directory: $input_file"
@@ -90,73 +147,46 @@ process_file() {
     return
   fi
 
+  # Check if file exists
   if [ ! -f "$input_file" ]; then
     echo "Skipping non-file $input_file"
     return
   fi
 
-  # Grab all relevant audio streams info (index, codec, channels, language)
-  local ffprobe_output
-  ffprobe_output=$(ffprobe -v error -select_streams a -show_entries stream=index,codec_name,channels:stream_tags=language -of csv=p=0 "$input_file")
+  # Get stream information
+  local subtitle_info
+  subtitle_info=$(ffprobe -v error -select_streams s -show_entries stream=index,codec_name -of csv=p=0 "$input_file")
 
-  if [ "$(echo "$ffprobe_output" | wc -l)" -eq 0 ]; then
-    return # Empty output means no audio streams found
+  local audio_info
+  audio_info=$(ffprobe -v error -select_streams a -show_entries stream=index,codec_name,channels:stream_tags=language -of csv=p=0 "$input_file")
+
+  if [ "$(echo "$audio_info" | wc -l)" -eq 0 ]; then
+    return # No audio streams found
   fi
 
-  local input_extension="${input_file##*.}"
-  local output_file="${input_file%.*}_transcoded.$input_extension"
+  # Process streams
+  local subtitle_results
+  subtitle_results=$(process_subtitles "$subtitle_info")
+  IFS='|' read -r subtitle_maps sub_needs_transcode <<<"$subtitle_results"
 
-  local ffmpeg_cmd="ffmpeg -loglevel warning -stats -i \"$input_file\" -c copy -map 0:v -map 0:s "
-  local main_lang_map=""       # Used to make sure that main language is the first audio stream
-  local other_lang_maps=""     # Used for all other audio streams
-  local main_lang_exists=false # Flag to check if main language exists within the audio streams
-  local main_stream_set=false  # Flag to check if main audio stream is set already
-  local need_transcode=false   # Flag to check if any audio streams need to be transcoded (only if true ffmpeg will be executed)
+  local audio_results
+  audio_results=$(process_audio "$audio_info")
+  IFS='|' read -r audio_maps audio_needs_transcode <<<"$audio_results"
 
-  # Check if main language exists within the audio streams
-  if echo "$ffprobe_output" | grep -q "$main_language"; then
-    main_lang_exists=true
-  fi
+  # Build and execute ffmpeg command if needed
+  if [ "$sub_needs_transcode" = "true" ] || [ "$audio_needs_transcode" = "true" ]; then
+    local input_extension="${input_file##*.}"
+    local output_file="${input_file%.*}_transcoded.$input_extension"
 
-  while IFS=, read -r index codec_name channels language; do
-    local stream_index=$((index - 1)) # FFmpeg stream index starts from 0
-
-    if [[ " ${desired_languages[*]} " == *" $language "* ]]; then
-      local stream_map="-map 0:a:$stream_index "
-      local transcode_options=""
-
-      if [[ "$language" == "$main_language" && $main_stream_set == false ]]; then
-        main_lang_map="$stream_map"
-        transcode_options=$(get_transcode_options "$codec_name" "$channels" 0)
-        main_lang_map+="$transcode_options"
-        main_stream_set=true
-      else
-        local mapped_index=$stream_index
-        if $main_lang_exists && [ "$stream_index" -eq 0 ]; then
-          mapped_index=1 # 0 index is reserved for the main audio stream
-        fi
-        other_lang_maps+="$stream_map"
-        transcode_options=$(get_transcode_options "$codec_name" "$channels" "$mapped_index")
-        other_lang_maps+="$transcode_options -disposition:a:$mapped_index 0 " # Ensure non-main audio streams are not default
-      fi
-
-      if [[ "$transcode_options" != *"copy"* ]]; then
-        need_transcode=true
-      fi
-    else
-      echo "Skipping audio stream $index in '$input_file' with language '$language'"
-    fi
-    stream_index=$((stream_index + 1))
-  done <<<"$ffprobe_output"
-
-  if $need_transcode; then
-    ffmpeg_cmd+="$main_lang_map $other_lang_maps -disposition:a:0 default \"$output_file\""
+    local ffmpeg_cmd="ffmpeg -loglevel warning -stats -i \"$input_file\" -c copy -map 0:v "
+    ffmpeg_cmd+="$subtitle_maps $audio_maps \"$output_file\""
+    
     echo "Running: $ffmpeg_cmd"
     eval "$ffmpeg_cmd"
-  fi
 
-  if [ -f "$output_file" ] && $overwrite; then
-    mv "$output_file" "$input_file"
+    if [ -f "$output_file" ] && $overwrite; then
+      mv "$output_file" "$input_file"
+    fi
   fi
 }
 
@@ -180,6 +210,7 @@ fi
 
 # Support Sonarr/Radarr post processing scripts
 # File paths are passed as environment variables (sonarr_episodefile_path and radarr_moviefile_path)
+# shellcheck disable=SC2154
 if [ -f "$sonarr_episodefile_path" ]; then
   echo "Processing file from Sonarr: $sonarr_episodefile_path"
   overwrite=true # Remove this if you want to keep the original file
