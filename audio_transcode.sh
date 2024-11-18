@@ -180,7 +180,7 @@ process_file() {
 
     local ffmpeg_cmd="ffmpeg -loglevel warning -stats -i \"$input_file\" -c copy -map 0:v "
     ffmpeg_cmd+="$subtitle_maps $audio_maps \"$output_file\""
-    
+
     echo "Running: $ffmpeg_cmd"
     eval "$ffmpeg_cmd"
 
@@ -191,31 +191,31 @@ process_file() {
 }
 
 process_video_files() {
-    local directory="$1"
-    local supported_extensions=("mkv" "mp4")
-    
-    cd "$directory" || exit 1
-    
-    for ext in "${supported_extensions[@]}"; do
-        if compgen -G "*.$ext" > /dev/null; then
-            for input_file in *."$ext"; do
-                echo "Processing file: $input_file"
-                process_file "$input_file"
-            done
-        fi
-    done
+  local directory="$1"
+  local supported_extensions=("mkv" "mp4")
+
+  cd "$directory" || exit 1
+
+  for ext in "${supported_extensions[@]}"; do
+    if compgen -G "*.$ext" >/dev/null; then
+      for input_file in *."$ext"; do
+        echo "Processing file: $input_file"
+        process_file "$input_file"
+      done
+    fi
+  done
 }
 
 # Support SABnzbd post processing scripts
 if [ -n "$SAB_COMPLETE_DIR" ]; then
-    # Make ffmpeg/ffprobe available for more shell environments
-    export PATH=$PATH:/opt/homebrew/bin:/lsiopy/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  # Make ffmpeg/ffprobe available for more shell environments
+  export PATH=$PATH:/opt/homebrew/bin:/lsiopy/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
-    traverse_subdirs=true
-    overwrite=true
-    
-    process_video_files "$SAB_COMPLETE_DIR"
-    exit 0
+  traverse_subdirs=true
+  overwrite=true
+
+  process_video_files "$SAB_COMPLETE_DIR"
+  exit 0
 fi
 
 # Support Sonarr/Radarr post processing scripts
@@ -235,9 +235,9 @@ fi
 
 # Arguments take precedence, if none are passed, process all files in the current dir
 if [ $# -gt 0 ]; then
-    for input_file in "$@"; do
-        process_file "$input_file"
-    done
+  for input_file in "$@"; do
+    process_file "$input_file"
+  done
 else
-    process_video_files "."
+  process_video_files "."
 fi
